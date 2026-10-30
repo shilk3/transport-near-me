@@ -61,7 +61,7 @@ function mins(t) {
   return m <= 0 ? 'Now' : `${m} min`;
 }
 function clock(t) {
-  return new Date(t * 1000).toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit' });
+  return new Date(t * 1000).toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit', timeZone: 'Australia/Sydney' });
 }
 function delayText(d) {
   if (d == null) return { text: 'Scheduled', cls: '' };
