@@ -36,6 +36,22 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(
 const colorOf = (t) => MODES[t.mode]?.color || '#666';
 const label = (t) => t.route.short || t.routeId.split('_').pop() || MODES[t.mode]?.label || '';
 
+// Direction of travel in degrees. Trains don't report one, so fall back to
+// the direction from the vehicle to its next stop.
+function heading(t) {
+  if (t.vehicle.bearing != null) return t.vehicle.bearing;
+  const next = t.approach[1] || t.path[0];
+  if (!next) return null;
+  const [lat1, lon1] = [t.vehicle.lat, t.vehicle.lon];
+  const [lat2, lon2] = next;
+  if (Math.abs(lat2 - lat1) + Math.abs(lon2 - lon1) < 1e-5) return null;
+  const rad = Math.PI / 180;
+  const y = Math.sin((lon2 - lon1) * rad) * Math.cos(lat2 * rad);
+  const x = Math.cos(lat1 * rad) * Math.sin(lat2 * rad) - Math.sin(lat1 * rad) * Math.cos(lat2 * rad) * Math.cos((lon2 - lon1) * rad);
+  return (Math.atan2(y, x) / rad + 360) % 360;
+}
+const ARROW = '<svg viewBox="0 0 20 16" width="20" height="16"><path d="M10 1 L19 15 L10 11 L1 15 Z" fill="var(--c)" stroke="#fff" stroke-width="2" stroke-linejoin="round"/></svg>';
+
 // ---- map ---------------------------------------------------------------
 const map = L.map('map', { zoomControl: false, attributionControl: true }).setView(SYDNEY, 15);
 L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -186,8 +202,11 @@ function renderMap() {
     if (!t.vehicle) continue;
     seen.add(t.key);
     const dim = sel && sel.group !== t.group;
+    const dir = heading(t);
+    // Arrow sits just outside the label, so its distance grows with the label
+    const reach = 15 + label(t).length * 4.5;
     const html = `<div class="veh${dim ? ' dim' : ''}${sel?.key === t.key ? ' sel' : ''}" style="--c:${colorOf(t)}">` +
-      (t.vehicle.bearing != null ? `<div class="arrow" style="transform:rotate(${t.vehicle.bearing}deg)"></div>` : '') +
+      (dir != null ? `<div class="arrow" style="transform:rotate(${dir.toFixed(0)}deg)"><i style="transform:translate(-50%,-${reach}px)">${ARROW}</i></div>` : '') +
       `<div class="tag" style="background:${colorOf(t)}">${esc(label(t))}</div></div>`;
     const icon = L.divIcon({ className: '', html, iconSize: [0, 0] });
     let m = vehicleMarkers.get(t.key);
