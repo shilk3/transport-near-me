@@ -1,0 +1,7 @@
+{
+  "buildCommand": "node scripts/build-network.mjs",
+  "outputDirectory": "public",
+  "functions": {
+    "api/*.js": { "includeFiles": "data/network.json", "maxDuration": 30, "memory": 1024 }
+  }
+}

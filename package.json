@@ -1,0 +1,32 @@
+{
+  "name": "transport-near-me",
+  "version": "1.0.0",
+  "description": "Live map of Sydney public transport around you",
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "mock": "MOCK=1 node scripts/dev.mjs",
+    "build-network": "node scripts/build-network.mjs",
+    "test": "node --test"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/shilk3/transport-near-me.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/shilk3/transport-near-me/issues"
+  },
+  "homepage": "https://github.com/shilk3/transport-near-me#readme",
+  "dependencies": {
+    "csv-parse": "^7.0.3",
+    "gtfs-realtime-bindings": "^1.1.1",
+    "unzipper": "^0.12.3"
+  },
+  "type": "module",
+  "private": true,
+  "engines": {
+    "node": ">=20"
+  }
+}

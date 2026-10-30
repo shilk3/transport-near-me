@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en-AU">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Transport Near Me</title>
+  <meta name="description" content="Live map of Sydney public transport around you">
+  <meta name="theme-color" content="#16202c">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Near Me">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon-180.png">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="map"></div>
+
+  <div class="topbar">
+    <div id="status" class="pill">Finding you…</div>
+    <button id="settingsBtn" class="round" aria-label="Settings">
+      <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M3 6h11a3 3 0 0 1 6 0h1v2h-1a3 3 0 0 1-6 0H3V6zm14-1a1 1 0 1 0 0 2 1 1 0 0 0 0-2zM3 16h3a3 3 0 0 1 6 0h9v2h-9a3 3 0 0 1-6 0H3v-2zm6-1a1 1 0 1 0 0 2 1 1 0 0 0 0-2z"/></svg>
+    </button>
+  </div>
+
+  <button id="locateBtn" class="round locate" aria-label="Back to my location">
+    <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zm9 3h-2.07A7 7 0 0 0 13 5.07V3h-2v2.07A7 7 0 0 0 5.07 11H3v2h2.07A7 7 0 0 0 11 18.93V21h2v-2.07A7 7 0 0 0 18.93 13H21v-2zm-9 6a5 5 0 1 1 0-10 5 5 0 0 1 0 10z"/></svg>
+  </button>
+
+  <div id="settings" class="panel" hidden>
+    <h2>Settings</h2>
+    <label>Radius <output id="radiusOut"></output>
+      <input id="radius" type="range" min="250" max="3000" step="250">
+    </label>
+    <label>Arriving within <output id="windowOut"></output>
+      <input id="window" type="range" min="10" max="120" step="5">
+    </label>
+    <p class="hint">Long-press the map to look around somewhere else. Tap the target button to come back.</p>
+    <button id="closeSettings" class="primary">Done</button>
+  </div>
+
+  <section id="sheet" class="sheet" data-size="half">
+    <button id="handle" class="handle" aria-label="Resize list"><span></span></button>
+    <div id="chips" class="chips"></div>
+    <div id="detail" class="detail" hidden></div>
+    <ul id="list" class="list"></ul>
+  </section>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
