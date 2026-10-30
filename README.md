@@ -6,7 +6,7 @@ A phone web app that maps Sydney public transport around you, using live data fr
 - every service that will reach one of those stops within a time window (default 60 min), with its live position if it's on the road
 - each service's route from inside the circle to the end of the line, plus a dashed lead-in from where the vehicle is now
 
-Tap a service (in the list or on the map) to highlight its route and see its times at the nearby stops. Tap a stop for its next arrivals. Long-press the map to look around somewhere else; the target button brings you back. Radius and time window are in settings (the slider button).
+Tap a service (in the list or on the map) to highlight its route and see its times at the nearby stops. Tap a stop for its next arrivals. Long-press the map to look around somewhere else; the target button brings you back. Radius, time window and starting zoom (default 200%, where 100% fits the whole circle) are in settings (the slider button).
 
 On iPhone, open the site in Safari and use Share → Add to Home Screen so it runs full-screen like an app.
 

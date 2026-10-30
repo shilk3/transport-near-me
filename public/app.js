@@ -8,6 +8,8 @@ const MODES = {
   ferry: { label: 'Ferries', color: '#5AB031' },
   coach: { label: 'Regional', color: '#D6812B' },
 };
+const ZOOMS = [50, 75, 100, 150, 200, 300, 400]; // starting zoom; 100% fits the whole circle
+const AWAY_MS = 15 * 60000; // back after this long counts as a fresh open
 const REFRESH_MS = 10000; // vehicle positions; arrival times update every 30 s on the server
 const SYDNEY = [-33.8708, 151.2073];
 const SHEET = { min: 96, half: 0.45, full: 0.82 };
@@ -20,6 +22,7 @@ const store = {
 const state = {
   radius: store.get('radius', 1000),
   windowMin: store.get('window', 60),
+  startZoom: store.get('startZoom', 200),
   hidden: new Set(store.get('hiddenModes', [])),
   me: null,          // last GPS fix
   center: null,      // what we're searching around
@@ -53,7 +56,7 @@ function heading(t) {
 const ARROW = '<svg viewBox="0 0 20 16" width="20" height="16"><path d="M10 1 L19 15 L10 11 L1 15 Z" fill="var(--c)" stroke="#fff" stroke-width="2" stroke-linejoin="round"/></svg>';
 
 // ---- map ---------------------------------------------------------------
-const map = L.map('map', { zoomControl: false, attributionControl: true }).setView(SYDNEY, 15);
+const map = L.map('map', { zoomControl: false, attributionControl: true, zoomSnap: 0.25 }).setView(SYDNEY, 15);
 L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
   maxZoom: 19,
   attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> · Data: Transport for NSW',
@@ -371,7 +374,18 @@ function setCenter(latlng, { gps = false, fly = false } = {}) {
   state.followGps = gps;
   layers.circle.setLatLng(latlng).setRadius(state.radius);
   $('locateBtn').classList.toggle('active', gps);
-  if (fly) map.fitBounds(layers.circle.getBounds(), { paddingTopLeft: [10, 60], paddingBottomRight: [10, sheetPx()] });
+  if (fly) frame(latlng);
+}
+
+// Opening view: the starting zoom relative to the whole circle fitting, with
+// the centre in the middle of the map area that isn't under the list.
+function frame(latlng) {
+  const top = 60;
+  const bottom = sheetPx();
+  const fit = map.getBoundsZoom(layers.circle.getBounds(), false, L.point(20, top + bottom));
+  const z = Math.min(19, fit + Math.log2(state.startZoom / 100));
+  const p = map.project(latlng, z).add([0, (bottom - top) / 2]);
+  map.setView(map.unproject(p, z), z, { animate: false });
 }
 
 map.on('contextmenu', (e) => {
@@ -404,7 +418,15 @@ function syncSettings() {
   $('window').value = state.windowMin;
   $('radiusOut').textContent = state.radius >= 1000 ? `${state.radius / 1000} km` : `${state.radius} m`;
   $('windowOut').textContent = `${state.windowMin} min`;
+  $('zoom').value = Math.max(0, ZOOMS.indexOf(state.startZoom));
+  $('zoomOut').textContent = `${state.startZoom}%`;
 }
+$('zoom').addEventListener('input', () => {
+  state.startZoom = ZOOMS[Number($('zoom').value)];
+  store.set('startZoom', state.startZoom);
+  syncSettings();
+  if (state.center) frame(state.center); // preview it
+});
 $('settingsBtn').addEventListener('click', () => { $('settings').hidden = !$('settings').hidden; });
 $('closeSettings').addEventListener('click', () => { $('settings').hidden = true; });
 let settingsTimer;
@@ -470,6 +492,13 @@ if (pinned) {
   locate(true);
 }
 setInterval(tick, 200);
+let hiddenAt = 0;
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden && Date.now() - lastAttempt > REFRESH_MS / 2) refresh();
+  if (document.hidden) { hiddenAt = Date.now(); return; }
+  if (hiddenAt && Date.now() - hiddenAt > AWAY_MS) {
+    // Back after a while: start again from where you are, at the starting zoom
+    if (state.locError && !state.followGps) frame(state.center);
+    else locate(true);
+  }
+  if (Date.now() - lastAttempt > REFRESH_MS / 2) refresh();
 });
