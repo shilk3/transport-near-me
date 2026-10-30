@@ -137,3 +137,13 @@ test('approach runs from the vehicle through stops still ahead of it', () => {
   const r = nearby({ network, trips: extra, lat: HERE[0], lon: HERE[1], radius: 1000, windowS: 3600, now: NOW });
   assert.deepEqual(r.trips[0].approach, [[-33.8702, 151.19], [-33.87, 151.185], [-33.8705, 151.201]]);
 });
+
+test('runs of the same service are grouped and only the first carries the line', () => {
+  const runs = [0, 600, 1200].map((offset, i) => ({
+    feed: 'buses', mode: 'bus', tripId: `run-${i}`, routeId: '2441_333', vehicleId: '', vehicle: null,
+    calls: [{ stopId: 'B1', t: NOW + 120 + offset, delay: 0 }, { stopId: 'B9', t: NOW + 900 + offset, delay: 0 }],
+  }));
+  const r = nearby({ network, trips: runs, lat: HERE[0], lon: HERE[1], radius: 1000, windowS: 3600, now: NOW });
+  assert.deepEqual(r.trips.map((t) => t.group), Array(3).fill('buses:333:Bondi Junction'));
+  assert.deepEqual(r.trips.map((t) => t.path.length), [2, 0, 0]);
+});

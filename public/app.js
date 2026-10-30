@@ -25,9 +25,10 @@ const state = {
   center: null,      // what we're searching around
   followGps: true,
   data: null,
-  selected: null,    // trip key
+  selected: null,    // trip key; its service's other runs are listed with it
   fetchedAt: 0,
   error: '',
+  locError: '',
 };
 
 const $ = (id) => document.getElementById(id);
@@ -102,6 +103,18 @@ function visibleTrips() {
   return (state.data?.trips || []).filter((t) => !state.hidden.has(t.mode));
 }
 
+// Runs of each service (route + destination), soonest first. Trips arrive
+// sorted by time, so the first run of each group is the next one.
+function services(trips) {
+  const groups = new Map();
+  for (const t of trips) {
+    if (!groups.has(t.group)) groups.set(t.group, []);
+    groups.get(t.group).push(t);
+  }
+  return groups;
+}
+const selectedTrip = () => visibleTrips().find((t) => t.key === state.selected);
+
 // ---- rendering ---------------------------------------------------------
 function render() {
   renderStatus();
@@ -115,11 +128,11 @@ function renderStatus() {
   const el = $('status');
   el.classList.toggle('error', !!state.error && !state.data);
   if (!state.data) { el.textContent = state.error || 'Loading live services…'; return; }
-  const trips = visibleTrips();
-  const live = trips.filter((t) => t.vehicle).length;
-  const where = state.followGps ? 'around you' : 'around pin';
+  const groups = [...services(visibleTrips()).values()];
+  const live = groups.filter((g) => g[0].vehicle).length;
+  const where = state.followGps ? 'around you' : state.locError ? 'around pin (location off)' : 'around pin';
   const updated = state.fetchedAt ? ` · ${ago(state.fetchedAt / 1000)}` : '';
-  el.textContent = state.error ? state.error : `${trips.length} services, ${live} live ${where}${updated}`;
+  el.textContent = state.error ? state.error : `${groups.length} services, ${live} live ${where}${updated}`;
 }
 
 function renderChips() {
@@ -128,36 +141,29 @@ function renderChips() {
     `<button class="chip" data-mode="${m}" aria-pressed="${!state.hidden.has(m)}"><i style="background:${d.color}"></i>${d.label}</button>`).join('');
 }
 
-function routeGroups(trips) {
-  // One line per route + destination: the longest remaining path stands in
-  // for the others, which keeps a busy corridor readable.
-  const groups = new Map();
-  for (const t of trips) {
-    const k = `${t.feed}:${t.routeId}:${t.destination}`;
-    const g = groups.get(k);
-    if (!g || t.path.length > g.path.length) groups.set(k, t);
-  }
-  return [...groups.values()];
-}
-
 function renderMap() {
   const d = state.data;
   layers.routes.clearLayers();
   layers.focus.clearLayers();
   layers.stops.clearLayers();
   const trips = visibleTrips();
-  const sel = trips.find((t) => t.key === state.selected);
+  const groups = services(trips);
+  const sel = selectedTrip();
+  const selPath = sel ? groups.get(sel.group)[0].path : [];
 
-  for (const t of routeGroups(trips)) {
-    if (t.path.length < 2) continue;
-    L.polyline(t.path, { pane: 'routes', color: colorOf(t), weight: 3, opacity: sel ? 0.15 : 0.55, interactive: false }).addTo(layers.routes);
+  // Only the next run of each service carries a line (and a vehicle), plus
+  // every run of the service that's selected.
+  const shown = [...groups.values()].flatMap((g) => (sel && g[0].group === sel.group ? g : g.slice(0, 1)));
+  for (const g of groups.values()) {
+    if (g[0].path.length < 2) continue;
+    L.polyline(g[0].path, { pane: 'routes', color: colorOf(g[0]), weight: 3, opacity: sel ? 0.15 : 0.55, interactive: false }).addTo(layers.routes);
   }
   if (sel) {
     if (sel.approach.length > 1) L.polyline(sel.approach, { pane: 'routes', color: colorOf(sel), weight: 4, opacity: 0.8, dashArray: '2 8', lineCap: 'round', interactive: false }).addTo(layers.focus);
-    if (sel.path.length > 1) {
-      L.polyline(sel.path, { pane: 'routes', color: '#fff', weight: 9, opacity: 0.9, interactive: false }).addTo(layers.focus);
-      L.polyline(sel.path, { pane: 'routes', color: colorOf(sel), weight: 6, opacity: 1, interactive: false }).addTo(layers.focus);
-      const end = sel.path[sel.path.length - 1];
+    if (selPath.length > 1) {
+      L.polyline(selPath, { pane: 'routes', color: '#fff', weight: 9, opacity: 0.9, interactive: false }).addTo(layers.focus);
+      L.polyline(selPath, { pane: 'routes', color: colorOf(sel), weight: 6, opacity: 1, interactive: false }).addTo(layers.focus);
+      const end = selPath[selPath.length - 1];
       L.circleMarker(end, { pane: 'stops', radius: 7, color: colorOf(sel), weight: 3, fillColor: '#fff', fillOpacity: 1 })
         .bindTooltip(esc(sel.destination), { permanent: true, direction: 'top', offset: [0, -6] }).addTo(layers.focus);
     }
@@ -176,10 +182,10 @@ function renderMap() {
   }
 
   const seen = new Set();
-  for (const t of trips) {
+  for (const t of shown) {
     if (!t.vehicle) continue;
     seen.add(t.key);
-    const dim = sel && sel.key !== t.key;
+    const dim = sel && sel.group !== t.group;
     const html = `<div class="veh${dim ? ' dim' : ''}${sel?.key === t.key ? ' sel' : ''}" style="--c:${colorOf(t)}">` +
       (t.vehicle.bearing != null ? `<div class="arrow" style="transform:rotate(${t.vehicle.bearing}deg)"></div>` : '') +
       `<div class="tag" style="background:${colorOf(t)}">${esc(label(t))}</div></div>`;
@@ -199,45 +205,57 @@ function renderMap() {
   }
 }
 
-function tripRow(t) {
+function serviceRow(runs) {
+  const t = runs[0];
   const c = t.calls[0];
   const dl = delayText(c.delay);
-  const more = t.calls.length > 1 ? ` +${t.calls.length - 1} more nearby` : '';
-  return `<li data-key="${esc(t.key)}" class="${t.key === state.selected ? 'sel' : ''}">
+  const then = runs.slice(1, 4).map((r) => mins(r.calls[0].t).replace(' min', '')).join(', ');
+  const sel = runs.some((r) => r.key === state.selected);
+  return `<li data-key="${esc(t.key)}" class="${sel ? 'sel' : ''}">
     <span class="badge" style="background:${colorOf(t)}">${esc(label(t))}</span>
-    <span class="what"><b>${esc(t.destination || t.route.long)}</b><span class="${t.vehicle ? 'live' : ''}">${esc(c.name)}${more}</span></span>
-    <span class="when">${mins(c.t)}<small class="${dl.cls}">${dl.text}</small></span></li>`;
+    <span class="what"><b>${esc(t.destination || t.route.long)}</b><span class="${t.vehicle ? 'live' : ''}">${esc(c.name)}</span></span>
+    <span class="when">${mins(c.t)}<small class="${dl.cls}">${dl.text}</small>${then ? `<small>then ${then} min</small>` : ''}</span></li>`;
 }
 
 function renderList() {
-  const trips = visibleTrips();
   if (!state.data) { $('list').innerHTML = ''; return; }
-  $('list').innerHTML = trips.length
-    ? trips.map(tripRow).join('')
+  const groups = [...services(visibleTrips()).values()];
+  $('list').innerHTML = groups.length
+    ? groups.map(serviceRow).join('')
     : `<li class="empty">Nothing arriving within ${state.windowMin} min of ${state.data.stops.length} stops in range.</li>`;
 }
 
 function renderDetail() {
   const el = $('detail');
-  const t = visibleTrips().find((x) => x.key === state.selected);
+  const t = selectedTrip();
   if (!t) { el.hidden = true; return; }
   el.hidden = false;
+  const runs = services(visibleTrips()).get(t.group);
   const v = t.vehicle;
+  const run = (r) => {
+    const c = r.calls[0];
+    const dl = delayText(c.delay);
+    return `<li data-run="${esc(r.key)}" class="${r.key === t.key ? 'on' : ''}">
+      <span class="${r.vehicle ? 'live' : ''}"><b>${clock(c.t)}</b> · ${mins(c.t)}</span>
+      <span class="stop">${esc(c.name)}</span>
+      <small class="${dl.cls}">${dl.text}</small></li>`;
+  };
   el.innerHTML = `<header>
       <span class="badge" style="background:${colorOf(t)}">${esc(label(t))}</span>
       <span class="what"><b>to ${esc(t.destination)}</b><span>${esc(t.route.long || MODES[t.mode]?.label)}</span></span>
       <button class="close" data-close aria-label="Close">✕</button>
     </header>
-    <ol>${t.calls.map((c) => { const dl = delayText(c.delay); return `<li><span>${esc(c.name)}</span><span><b>${clock(c.t)}</b> <small class="${dl.cls}">${dl.text}</small></span></li>`; }).join('')}</ol>
-    <div class="meta">${v ? `<span class="live">Live position ${ago(v.ts)}</span>` : 'No live position yet (probably not departed)'}${v?.label ? ` · ${esc(v.label)}` : ''}</div>`;
+    <ol class="runs">${runs.map(run).join('')}</ol>
+    <div class="meta">${v ? `<span class="live">Selected run: live position ${ago(v.ts)}</span>` : 'Selected run has no live position yet (probably not departed)'}${v?.label ? ` · ${esc(v.label)}` : ''}</div>`;
 }
 
 function select(key, fromMap) {
   state.selected = state.selected === key && fromMap ? null : key;
   render();
-  const t = visibleTrips().find((x) => x.key === state.selected);
+  const t = selectedTrip();
   if (!t) return;
-  const pts = [...t.path, ...(t.vehicle ? [[t.vehicle.lat, t.vehicle.lon]] : [])];
+  const path = services(visibleTrips()).get(t.group)[0].path;
+  const pts = [...path, ...(t.vehicle ? [[t.vehicle.lat, t.vehicle.lon]] : [])];
   if (pts.length) {
     const pad = { paddingTopLeft: [30, 80], paddingBottomRight: [30, sheetPx() + 20] };
     map.fitBounds(L.latLngBounds(pts), { ...pad, maxZoom: 16 });
@@ -246,11 +264,19 @@ function select(key, fromMap) {
 }
 
 function openStop(s) {
+  // Next run of each service at this stop
   const byKey = new Map((state.data?.trips || []).map((t) => [t.key, t]));
-  const rows = s.arrivals.map((a) => byKey.get(a.key)).filter((t) => t && !state.hidden.has(t.mode)).slice(0, 8);
   const own = new Map(s.arrivals.map((a) => [a.key, a.t]));
+  const seen = new Set();
+  const rows = [];
+  for (const a of s.arrivals) {
+    const t = byKey.get(a.key);
+    if (!t || state.hidden.has(t.mode) || seen.has(t.group)) continue;
+    seen.add(t.group);
+    rows.push(t);
+  }
   const html = `<h3>${esc(s.name)}</h3>` + (rows.length
-    ? `<ul>${rows.map((t) => `<li data-key="${esc(t.key)}"><span class="badge" style="background:${colorOf(t)}">${esc(label(t))}</span><span>${esc(t.destination)}</span><b>${mins(own.get(t.key))}</b></li>`).join('')}</ul>`
+    ? `<ul>${rows.slice(0, 10).map((t) => `<li data-key="${esc(t.key)}"><span class="badge" style="background:${colorOf(t)}">${esc(label(t))}</span><span>${esc(t.destination)}</span><b>${mins(own.get(t.key))}</b></li>`).join('')}</ul>`
     : `<div class="hint">Nothing in the next ${state.windowMin} min.</div>`);
   const popup = L.popup({ offset: [0, -4], autoPanPaddingBottomRight: [10, sheetPx() + 10] }).setLatLng([s.lat, s.lon]).setContent(html).openOn(map);
   popup.getElement().addEventListener('click', (e) => {
@@ -291,7 +317,9 @@ $('list').addEventListener('click', (e) => {
   if (li) select(li.dataset.key);
 });
 $('detail').addEventListener('click', (e) => {
-  if (e.target.closest('[data-close]')) { state.selected = null; render(); }
+  if (e.target.closest('[data-close]')) { state.selected = null; render(); return; }
+  const r = e.target.closest('[data-run]');
+  if (r) select(r.dataset.run);
 });
 $('chips').addEventListener('click', (e) => {
   const b = e.target.closest('[data-mode]');
@@ -319,8 +347,21 @@ map.on('contextmenu', (e) => {
 });
 
 $('locateBtn').addEventListener('click', () => {
-  if (state.me) { setCenter(state.me, { gps: true, fly: true }); refresh(); } else startGps(true);
+  if (state.me) { setCenter(state.me, { gps: true, fly: true }); refresh(); return; }
+  // Ask again from the tap itself; iOS is more willing to prompt from a user gesture.
+  toast('Finding you…');
+  locate(true);
 });
+
+let toastTimer;
+function toast(msg, ms = 4000) {
+  const el = $('toast');
+  el.textContent = msg;
+  el.hidden = false;
+  clearTimeout(toastTimer);
+  if (ms) toastTimer = setTimeout(() => { el.hidden = true; }, ms);
+}
+$('toast').addEventListener('click', () => { $('toast').hidden = true; });
 
 // ---- settings ----------------------------------------------------------
 function syncSettings() {
@@ -346,31 +387,40 @@ for (const id of ['radius', 'window']) {
 }
 
 // ---- location ----------------------------------------------------------
-let watching = false;
-function startGps(fly) {
-  if (!navigator.geolocation) { noGps('Location not available'); return; }
-  if (watching) return;
-  watching = true;
-  let first = true;
-  navigator.geolocation.watchPosition((p) => {
-    state.me = [p.coords.latitude, p.coords.longitude];
-    layers.me.setLatLng(state.me).addTo(map);
-    if (state.followGps || first) {
-      const moved = !state.center || map.distance(state.center, state.me) > 100;
-      if (first || moved) {
-        setCenter(state.me, { gps: true, fly: first || fly });
-        refresh();
-      }
-    }
-    first = false;
-  }, (err) => { watching = false; noGps(err.code === 1 ? 'Location permission denied' : 'Couldn’t get your location'); },
-  { enableHighAccuracy: true, maximumAge: 15000, timeout: 20000 });
+const GPS_OPTS = { enableHighAccuracy: true, maximumAge: 15000, timeout: 20000 };
+const BLOCKED = 'Location is blocked, so this is the CBD. If you opened this inside another app, open it in Safari instead. '
+  + 'In Safari, allow it under Settings → Privacy & Security → Location Services → Safari Websites (While Using), then tap ⌖.';
+let watchId = null;
+
+function onFix(p, fly) {
+  const first = !state.me;
+  state.me = [p.coords.latitude, p.coords.longitude];
+  state.locError = '';
+  $('toast').hidden = true;
+  layers.me.setLatLng(state.me).addTo(map);
+  if (!(state.followGps || first || fly)) return;
+  if (first || fly || map.distance(state.center, state.me) > 100) {
+    setCenter(state.me, { gps: true, fly: first || fly });
+    state.data = null;
+    render();
+    refresh();
+  }
 }
-function noGps(msg) {
-  if (state.center) return;
-  state.error = `${msg} — showing Sydney CBD. Long-press the map to move.`;
-  setCenter(SYDNEY, { fly: true });
-  refresh();
+
+function onGpsError(err) {
+  if (watchId != null) { navigator.geolocation.clearWatch(watchId); watchId = null; }
+  state.locError = err.code === 1 ? BLOCKED : 'Couldn’t get a GPS fix yet. Tap ⌖ to try again, or long-press the map to pick a spot.';
+  toast(state.locError, 0);
+  if (!state.center) { setCenter(SYDNEY, { fly: true }); refresh(); }
+  renderStatus();
+}
+
+function locate(fly) {
+  if (!navigator.geolocation) { onGpsError({ code: 1 }); return; }
+  navigator.geolocation.getCurrentPosition((p) => {
+    onFix(p, fly);
+    if (watchId == null) watchId = navigator.geolocation.watchPosition((q) => onFix(q, false), () => {}, GPS_OPTS);
+  }, onGpsError, GPS_OPTS);
 }
 
 // ---- start -------------------------------------------------------------
@@ -382,7 +432,7 @@ if (pinned) {
   setCenter([lat, lon], { fly: true });
   refresh();
 } else {
-  startGps(true);
+  locate(true);
 }
 setInterval(() => { if (!document.hidden) refresh(); }, REFRESH_MS);
 setInterval(() => { if (state.data) { renderStatus(); renderList(); } }, 15000);

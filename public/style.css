@@ -83,7 +83,9 @@ button { font: inherit; color: inherit; }
 .detail header .what b { font-size: 16px; }
 .detail .close { margin-left: auto; border: 0; background: var(--line); border-radius: 50%; width: 30px; height: 30px; flex: none; }
 .detail ol { margin: 8px 0 0; padding: 0; list-style: none; font-size: 14px; }
-.detail ol li { display: flex; justify-content: space-between; gap: 8px; padding: 3px 0; }
+.runs li { display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: baseline; padding: 6px 8px; margin: 0 -8px; border-radius: 8px; cursor: pointer; }
+.runs li.on { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.runs .stop { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .detail .meta { color: var(--muted); font-size: 13px; margin-top: 6px; }
 
 .veh { position: relative; }
@@ -100,3 +102,6 @@ button { font: inherit; color: inherit; }
 .leaflet-popup-content li span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .leaflet-control-attribution { font-size: 10px; }
 .leaflet-top.leaflet-left { top: calc(var(--safe-top) + 60px); }
+
+.toast { position: fixed; z-index: 1200; top: calc(var(--safe-top) + 64px); left: 12px; right: 12px; max-width: 460px; margin: 0 auto;
+  background: var(--fg); color: var(--bg); border-radius: 12px; padding: 12px 14px; font-size: 14px; box-shadow: var(--shadow); cursor: pointer; }
