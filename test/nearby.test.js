@@ -39,8 +39,7 @@ const network = new Network({
 
 // Round-trip through protobuf so decoding of real feeds is exercised too.
 function encodeDecode(obj) {
-  const buf = FeedMessage.encode(FeedMessage.fromObject(obj)).finish();
-  return FeedMessage.toObject(FeedMessage.decode(buf), { longs: Number, enums: Number });
+  return FeedMessage.decode(FeedMessage.encode(FeedMessage.fromObject(obj)).finish());
 }
 const header = { gtfsRealtimeVersion: '2.0', timestamp: NOW };
 

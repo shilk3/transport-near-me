@@ -8,7 +8,7 @@ const MODES = {
   ferry: { label: 'Ferries', color: '#5AB031' },
   coach: { label: 'Regional', color: '#D6812B' },
 };
-const REFRESH_MS = 20000;
+const REFRESH_MS = 30000;
 const SYDNEY = [-33.8708, 151.2073];
 const SHEET = { min: 96, half: 0.45, full: 0.82 };
 
