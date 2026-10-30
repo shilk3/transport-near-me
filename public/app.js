@@ -8,7 +8,7 @@ const MODES = {
   ferry: { label: 'Ferries', color: '#5AB031' },
   coach: { label: 'Regional', color: '#D6812B' },
 };
-const REFRESH_MS = 30000;
+const REFRESH_MS = 10000; // vehicle positions; arrival times update every 30 s on the server
 const SYDNEY = [-33.8708, 151.2073];
 const SHEET = { min: 96, half: 0.45, full: 0.82 };
 
@@ -93,14 +93,17 @@ function ago(ts) {
 
 // ---- data --------------------------------------------------------------
 let inflight = null;
+let lastAttempt = 0;
 async function refresh() {
   if (!state.center) return;
   inflight?.abort();
-  inflight = new AbortController();
+  const ctl = (inflight = new AbortController());
+  lastAttempt = Date.now();
+  $('pie').classList.add('busy');
   const [lat, lon] = state.center;
   const q = new URLSearchParams({ lat: lat.toFixed(5), lon: lon.toFixed(5), radius: state.radius, window: state.windowMin });
   try {
-    const res = await fetch(`api/nearby?${q}`, { signal: inflight.signal });
+    const res = await fetch(`api/nearby?${q}`, { signal: ctl.signal });
     const body = await res.json();
     if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
     state.data = body;
@@ -112,8 +115,21 @@ async function refresh() {
     if (e.name === 'AbortError') return;
     state.error = `Couldn't load live data: ${e.message}`;
     renderStatus();
+  } finally {
+    if (inflight === ctl) $('pie').classList.remove('busy');
   }
 }
+
+// Countdown to the next refresh, like TripView's: the circle fills as the
+// next update approaches. Tap it to refresh now.
+function tick() {
+  const el = $('pie');
+  const busy = el.classList.contains('busy');
+  const f = busy ? 1 : Math.min(1, (Date.now() - lastAttempt) / REFRESH_MS);
+  el.style.setProperty('--f', `${(f * 360).toFixed(0)}deg`);
+  if (!busy && !document.hidden && state.center && f >= 1) refresh();
+}
+$('pie').addEventListener('click', () => refresh());
 
 function visibleTrips() {
   return (state.data?.trips || []).filter((t) => !state.hidden.has(t.mode));
@@ -453,8 +469,7 @@ if (pinned) {
 } else {
   locate(true);
 }
-setInterval(() => { if (!document.hidden) refresh(); }, REFRESH_MS);
-setInterval(() => { if (state.data) { renderStatus(); renderList(); } }, 15000);
+setInterval(tick, 200);
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden && Date.now() - state.fetchedAt > REFRESH_MS / 2) refresh();
+  if (!document.hidden && Date.now() - lastAttempt > REFRESH_MS / 2) refresh();
 });
