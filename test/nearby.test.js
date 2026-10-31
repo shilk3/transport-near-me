@@ -147,3 +147,16 @@ test('runs of the same service are grouped and only the first carries the line',
   assert.deepEqual(r.trips.map((t) => t.group), Array(3).fill('buses:333:Bondi Junction'));
   assert.deepEqual(r.trips.map((t) => t.path.length), [2, 0, 0]);
 });
+
+test('lines follow the stored shape between stops and fall back to straight', async () => {
+  const { encode, decode } = await import('../lib/polyline.js');
+  const curve = [[-33.8705, 151.201], [-33.8800, 151.2300], [-33.891, 151.247]];
+  assert.deepEqual(decode(encode(curve)), curve);
+  const shaped = new Network({
+    builtAt: 'test',
+    feeds: { buses: { mode: 'bus', stops: [['B1', 'a', -33.8705, 151.201, '', 0], ['B9', 'b', -33.891, 151.247, '', 0], ['B0', 'c', -33.87, 151.185, '', 0]],
+      routes: {}, segments: { 'B1>B9': encode(curve) } } },
+  });
+  assert.deepEqual(shaped.line('buses', ['B1', 'B9']), curve);
+  assert.deepEqual(shaped.line('buses', ['B9', 'B0']), [[-33.891, 151.247], [-33.87, 151.185]]);
+});

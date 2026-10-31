@@ -94,6 +94,31 @@ function ago(ts) {
   return s < 60 ? `${s}s ago` : `${Math.round(s / 60)} min ago`;
 }
 
+// Encoded polyline (5 decimal places) -> [[lat, lon], ...]; see lib/polyline.js
+function decodeLine(str) {
+  const pts = [];
+  let i = 0;
+  let lat = 0;
+  let lon = 0;
+  const take = () => {
+    let shift = 0;
+    let result = 0;
+    let b;
+    do {
+      b = str.charCodeAt(i++) - 63;
+      result |= (b & 0x1f) << shift;
+      shift += 5;
+    } while (b >= 0x20);
+    return result & 1 ? ~(result >> 1) : result >> 1;
+  };
+  while (i < str.length) {
+    lat += take();
+    lon += take();
+    pts.push([lat / 1e5, lon / 1e5]);
+  }
+  return pts;
+}
+
 // ---- data --------------------------------------------------------------
 let inflight = null;
 let lastAttempt = 0;
@@ -109,6 +134,10 @@ async function refresh() {
     const res = await fetch(`api/nearby?${q}`, { signal: ctl.signal });
     const body = await res.json();
     if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+    for (const t of body.trips) {
+      t.path = decodeLine(t.path);
+      t.approach = decodeLine(t.approach);
+    }
     state.data = body;
     state.fetchedAt = Date.now();
     state.error = body.failedFeeds?.length ? `Some feeds unavailable (${body.failedFeeds.length})` : '';

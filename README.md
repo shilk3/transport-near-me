@@ -17,7 +17,7 @@ On iPhone, open the site in Safari and use Share → Add to Home Screen so it ru
 - `public/` is a static Leaflet frontend that refreshes every 10 s, with a countdown circle you can tap to refresh now.
 - `api/status.js` shows feed health and counts, which is handy for checking the API key works.
 
-Routes are drawn stop to stop rather than along the exact road or track shape.
+Route lines follow the road or track using the GTFS shapes, cut into sections between neighbouring stops at build time (straight lines only where a section has no shape).
 
 ## Setup
 
