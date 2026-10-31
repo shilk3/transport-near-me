@@ -160,3 +160,14 @@ test('lines follow the stored shape between stops and fall back to straight', as
   assert.deepEqual(shaped.line('buses', ['B1', 'B9']), curve);
   assert.deepEqual(shaped.line('buses', ['B9', 'B0']), [[-33.891, 151.247], [-33.87, 151.185]]);
 });
+
+test('self-refresh is due a week before the timetable runs out or after three weeks', async () => {
+  const { refreshDue } = await import('../lib/refresh.js');
+  const at = (d) => Date.parse(`${d}T02:00:00Z`) / 1000; // midday in Sydney
+  const meta = { builtAt: '2026-10-31T00:00:00Z', timetableExpires: '20261128' };
+  assert.equal(refreshDue(meta, at('2026-11-15')).due, false);
+  assert.equal(refreshDue(meta, at('2026-11-21')).due, true);
+  assert.equal(refreshDue({ ...meta, timetableExpires: '20270101' }, at('2026-11-21')).due, true); // 21 days old
+  assert.equal(refreshDue({ ...meta, timetableExpires: '20270101' }, at('2026-11-20')).due, false);
+  assert.equal(refreshDue({}, at('2026-11-01')).due, true);
+});

@@ -3,12 +3,18 @@
   "outputDirectory": "public",
   "functions": {
     "api/*.js": {
-      "includeFiles": "data/network.json",
+      "includeFiles": "data/*.json",
       "maxDuration": 30,
       "memory": 1024
     }
   },
   "regions": [
     "syd1"
+  ],
+  "crons": [
+    {
+      "path": "/api/refresh",
+      "schedule": "23 16 * * *"
+    }
   ]
 }

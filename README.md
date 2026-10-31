@@ -12,7 +12,7 @@ On iPhone, open the site in Safari and use Share → Add to Home Screen so it ru
 
 ## How it works
 
-- `scripts/build-network.mjs` runs at deploy time. It streams the TfNSW static GTFS bundles and keeps only stop locations, route names and, for trains, ferries and regional trains (whose realtime feeds mostly send delays), four weeks of scheduled stop times (`data/network.json`). Redeploy at least every four weeks so the timetable doesn't run out.
+- `scripts/build-network.mjs` runs at deploy time. It streams the TfNSW static GTFS bundles and keeps only stop locations, route names and, for trains, ferries and regional trains (whose realtime feeds mostly send delays), four weeks of scheduled stop times (`data/network.json`). The build records when that timetable runs out (`data/meta.json`). A daily Vercel Cron calls `api/refresh.js`, which triggers the project's deploy hook (`DEPLOY_HOOK_URL`) a week before expiry or once the data is three weeks old, so the app keeps itself current.
 - `api/nearby.js` fetches the GTFS-Realtime feeds for every mode (vehicle positions cached for 10 s, the much larger trip updates for 30 s), finds trips calling at stops in the circle within the window, and returns them with their remaining stops as the route line.
 - `public/` is a static Leaflet frontend that refreshes every 10 s, with a countdown circle you can tap to refresh now.
 - `api/status.js` shows feed health and counts, which is handy for checking the API key works.
@@ -23,7 +23,7 @@ Route lines follow the road or track using the GTFS shapes, cut into sections be
 
 Needs a free TfNSW Open Data API key (opendata.transport.nsw.gov.au) with access to the Public Transport realtime and timetable datasets.
 
-Deploy to Vercel and set `TFNSW_API_KEY` in the project's environment variables. The build downloads the stop data, so the key is needed at build time too.
+Deploy to Vercel and set `TFNSW_API_KEY` in the project's environment variables. The build downloads the stop data, so the key is needed at build time too. For self-refresh, also set `CRON_SECRET` (any random string) and `DEPLOY_HOOK_URL` (Project Settings → Git → Deploy Hooks, for the production branch).
 
 ## Local development
 

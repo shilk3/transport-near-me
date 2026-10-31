@@ -65,14 +65,19 @@ async function readBundle(feed, tmp) {
 
   // Which services run on the covered days (timetable feeds only)
   const active = new Set();
+  let lastDay = ''; // last date any service in the bundle runs
   if (feed.timetable) {
     const days = coveredDays();
     const dates = new Set(days.map((d) => d.date));
     await eachRow(dir, 'calendar.txt', (c) => {
+      if (c.end_date > lastDay) lastDay = c.end_date;
       if (days.some((d) => d.date >= c.start_date && d.date <= c.end_date && c[WEEKDAYS[d.weekday]] === '1')) active.add(c.service_id);
     });
     // Exceptions can add a service; a removal on one day doesn't stop it running on the others
-    await eachRow(dir, 'calendar_dates.txt', (c) => { if (c.exception_type === '1' && dates.has(c.date)) active.add(c.service_id); });
+    await eachRow(dir, 'calendar_dates.txt', (c) => {
+      if (c.exception_type === '1' && c.date > lastDay) lastDay = c.date;
+      if (c.exception_type === '1' && dates.has(c.date)) active.add(c.service_id);
+    });
   }
 
   const shapeOf = new Map();
@@ -141,7 +146,9 @@ async function readBundle(feed, tmp) {
   const out = { stops, routes, segments };
   if (feed.timetable) {
     const days = coveredDays();
-    out.timetable = { from: days[0].date, to: days[days.length - 1].date, patterns: tt.patterns, trips: tt.trips };
+    // Usable until the end of our window or the bundle, whichever is first
+    const to = [days[days.length - 1].date, lastDay].filter(Boolean).sort()[0];
+    out.timetable = { from: days[0].date, to, patterns: tt.patterns, trips: tt.trips };
   }
   return out;
 }
@@ -260,4 +267,7 @@ if (!Object.keys(network.feeds).length) {
 }
 await mkdir(new URL('../data/', import.meta.url), { recursive: true });
 await writeFile(OUT, JSON.stringify(network));
+// Small summary for the daily refresh check, so it needn't load the network
+const ends = Object.values(network.feeds).map((f) => f.timetable?.to).filter(Boolean).sort();
+await writeFile(new URL('../data/meta.json', import.meta.url), JSON.stringify({ builtAt: network.builtAt, timetableExpires: ends[0] || '' }));
 console.log(`Wrote data/network.json (${failed} feed(s) failed)`);
