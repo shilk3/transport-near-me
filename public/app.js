@@ -24,6 +24,9 @@ const state = {
   windowMin: store.get('window', 60),
   startZoom: store.get('startZoom', 200),
   hidden: new Set(store.get('hiddenModes', [])),
+  favs: new Set(store.get('favourites', [])), // service groups: feed:route:destination
+  openFavs: store.get('openFavs', false),
+  favOnly: store.get('openFavs', false),
   me: null,          // last GPS fix
   center: null,      // what we're searching around
   followGps: true,
@@ -164,8 +167,18 @@ function tick() {
 $('pie').addEventListener('click', () => refresh());
 
 function visibleTrips() {
-  return (state.data?.trips || []).filter((t) => !state.hidden.has(t.mode));
+  return (state.data?.trips || []).filter((t) => !state.hidden.has(t.mode) && (!state.favOnly || state.favs.has(t.group)));
 }
+
+function toggleFav(group) {
+  state.favs.has(group) ? state.favs.delete(group) : state.favs.add(group);
+  store.set('favourites', [...state.favs]);
+  render();
+}
+const star = (group) => {
+  const on = state.favs.has(group);
+  return `<button class="star${on ? ' on' : ''}" data-star="${esc(group)}" aria-label="${on ? 'Remove from' : 'Add to'} favourites" aria-pressed="${on}">${on ? '★' : '☆'}</button>`;
+};
 
 // Runs of each service (route + destination), soonest first. Trips arrive
 // sorted by time, so the first run of each group is the next one.
@@ -196,13 +209,15 @@ function renderStatus() {
   const live = groups.filter((g) => g[0].vehicle).length;
   const where = state.followGps ? 'around you' : state.locError ? 'around pin (location off)' : 'around pin';
   const updated = state.fetchedAt ? ` · ${ago(state.fetchedAt / 1000)}` : '';
-  el.textContent = state.error ? state.error : `${groups.length} services, ${live} live ${where}${updated}`;
+  const what = `${groups.length} ${state.favOnly ? 'favourite' : 'service'}${groups.length === 1 ? '' : 's'}`;
+  el.textContent = state.error ? state.error : `${what}, ${live} live ${where}${updated}`;
 }
 
 function renderChips() {
   const modes = new Set([...(state.data?.trips || []).map((t) => t.mode), ...(state.data?.stops || []).map((s) => s.mode)]);
-  $('chips').innerHTML = Object.entries(MODES).filter(([m]) => modes.has(m)).map(([m, d]) =>
-    `<button class="chip" data-mode="${m}" aria-pressed="${!state.hidden.has(m)}"><i style="background:${d.color}"></i>${d.label}</button>`).join('');
+  $('chips').innerHTML = `<button class="chip fav" data-fav aria-pressed="${state.favOnly}">★ Favourites</button>` +
+    Object.entries(MODES).filter(([m]) => modes.has(m)).map(([m, d]) =>
+      `<button class="chip" data-mode="${m}" aria-pressed="${!state.hidden.has(m)}"><i style="background:${d.color}"></i>${d.label}</button>`).join('');
 }
 
 function renderMap() {
@@ -234,8 +249,11 @@ function renderMap() {
   }
 
   const shownModes = new Set(trips.map((t) => t.mode));
+  const groupOf = new Map((d?.trips || []).map((t) => [t.key, t.group]));
   for (const s of d?.stops || []) {
     if (state.hidden.has(s.mode)) continue;
+    // With the favourites filter on, only stops a favourite calls at
+    if (state.favOnly && !s.arrivals.some((a) => state.favs.has(groupOf.get(a.key)))) continue;
     const station = s.mode !== 'bus';
     const active = s.arrivals.length > 0 || !shownModes.size;
     const onSel = sel && sel.calls.some((c) => c.stopId === s.id);
@@ -281,15 +299,20 @@ function serviceRow(runs) {
   return `<li data-key="${esc(t.key)}" class="${sel ? 'sel' : ''}">
     <span class="badge" style="background:${colorOf(t)}">${esc(label(t))}</span>
     <span class="what"><b>${esc(t.destination || t.route.long)}</b><span class="${t.vehicle ? 'live' : ''}">${esc(c.name)}</span></span>
-    <span class="when">${mins(c.t)}<small class="${dl.cls}">${dl.text}</small>${then ? `<small>then ${then} min</small>` : ''}</span></li>`;
+    <span class="when">${mins(c.t)}<small class="${dl.cls}">${dl.text}</small>${then ? `<small>then ${then} min</small>` : ''}</span>
+    ${star(t.group)}</li>`;
 }
 
 function renderList() {
   if (!state.data) { $('list').innerHTML = ''; return; }
   const groups = [...services(visibleTrips()).values()];
-  $('list').innerHTML = groups.length
-    ? groups.map(serviceRow).join('')
-    : `<li class="empty">Nothing arriving within ${state.windowMin} min of ${state.data.stops.length} stops in range.</li>`;
+  let empty = `Nothing arriving within ${state.windowMin} min of ${state.data.stops.length} stops in range.`;
+  if (state.favOnly) {
+    empty = state.favs.size
+      ? `None of your favourites are due here within ${state.windowMin} min. Tap ★ Favourites to show everything.`
+      : 'No favourites yet. Tap ★ Favourites to show everything, then tap ☆ on a service to add it.';
+  }
+  $('list').innerHTML = groups.length ? groups.map(serviceRow).join('') : `<li class="empty">${empty}</li>`;
 }
 
 function renderDetail() {
@@ -310,6 +333,7 @@ function renderDetail() {
   el.innerHTML = `<header>
       <span class="badge" style="background:${colorOf(t)}">${esc(label(t))}</span>
       <span class="what"><b>to ${esc(t.destination)}</b><span>${esc(t.route.long || MODES[t.mode]?.label)}</span></span>
+      ${star(t.group)}
       <button class="close" data-close aria-label="Close">✕</button>
     </header>
     <ol class="runs">${runs.map(run).join('')}</ol>
@@ -338,7 +362,7 @@ function openStop(s) {
   const rows = [];
   for (const a of s.arrivals) {
     const t = byKey.get(a.key);
-    if (!t || state.hidden.has(t.mode) || seen.has(t.group)) continue;
+    if (!t || state.hidden.has(t.mode) || (state.favOnly && !state.favs.has(t.group)) || seen.has(t.group)) continue;
     seen.add(t.group);
     rows.push(t);
   }
@@ -380,15 +404,24 @@ window.addEventListener('resize', () => setSheet(sheetSize));
 
 // ---- interactions ------------------------------------------------------
 $('list').addEventListener('click', (e) => {
+  const s = e.target.closest('[data-star]');
+  if (s) { toggleFav(s.dataset.star); return; }
   const li = e.target.closest('li[data-key]');
   if (li) select(li.dataset.key);
 });
 $('detail').addEventListener('click', (e) => {
   if (e.target.closest('[data-close]')) { state.selected = null; render(); return; }
+  const s = e.target.closest('[data-star]');
+  if (s) { toggleFav(s.dataset.star); return; }
   const r = e.target.closest('[data-run]');
   if (r) select(r.dataset.run);
 });
 $('chips').addEventListener('click', (e) => {
+  if (e.target.closest('[data-fav]')) {
+    state.favOnly = !state.favOnly;
+    render();
+    return;
+  }
   const b = e.target.closest('[data-mode]');
   if (!b) return;
   const m = b.dataset.mode;
@@ -449,7 +482,12 @@ function syncSettings() {
   $('windowOut').textContent = `${state.windowMin} min`;
   $('zoom').value = Math.max(0, ZOOMS.indexOf(state.startZoom));
   $('zoomOut').textContent = `${state.startZoom}%`;
+  $('openFavs').checked = state.openFavs;
 }
+$('openFavs').addEventListener('change', () => {
+  state.openFavs = $('openFavs').checked;
+  store.set('openFavs', state.openFavs);
+});
 $('zoom').addEventListener('input', () => {
   state.startZoom = ZOOMS[Number($('zoom').value)];
   store.set('startZoom', state.startZoom);
