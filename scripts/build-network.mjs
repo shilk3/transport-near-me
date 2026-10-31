@@ -16,6 +16,7 @@ import { parse } from 'csv-parse';
 import { FEEDS, tfnswFetch } from '../lib/feeds.js';
 import { sydneyDate } from '../lib/time.js';
 import { encode } from '../lib/polyline.js';
+import { favKey } from '../lib/nearby.js';
 
 const OUT = new URL('../data/network.json', import.meta.url);
 const SERVICES_OUT = new URL('../public/services.json', import.meta.url);
@@ -119,8 +120,8 @@ async function readBundle(feed, tmp) {
       // rest the last stop (see lib/nearby.js)
       const dest = (feed.timetable && info[1]) || displayName(rows[rows.length - 1].stop);
       const short = route?.[0] || info[0];
-      const key = `${short}\t${dest}`;
-      if (dest && !services.has(key)) services.set(key, [short, dest, route?.[1] || '']);
+      const key = `${info[0]}\t${short}\t${dest}`;
+      if (dest && !services.has(key)) services.set(key, [short, dest, route?.[1] || '', favKey(feed.id, info[0], short)]);
     }
     const shape = shapeOf.get(cur);
     if (shape) {

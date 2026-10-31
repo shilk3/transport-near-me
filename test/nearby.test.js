@@ -171,3 +171,11 @@ test('self-refresh is due a week before the timetable runs out or after three we
   assert.equal(refreshDue({ ...meta, timetableExpires: '20270101' }, at('2026-11-20')).due, false);
   assert.equal(refreshDue({}, at('2026-11-01')).due, true);
 });
+
+test('favourites are a route number, with the operator for buses', async () => {
+  const { favKey } = await import('../lib/nearby.js');
+  assert.equal(favKey('buses', '2503_818', '818'), 'buses:818:2503');
+  assert.equal(favKey('buses', '3000_818', '818'), 'buses:818:3000');
+  assert.equal(favKey('sydneytrains', 'BMT_1', 'T1'), 'sydneytrains:T1');
+  assert.equal(result.trips[0].fav, 'buses:333:2441');
+});

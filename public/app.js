@@ -16,6 +16,13 @@ const SYDNEY = [-33.8708, 151.2073];
 const FEED_MODES = { sydneytrains: 'train', metro: 'metro', 'lr-innerwest': 'lightrail', 'lr-cbdse': 'lightrail', 'lr-parramatta': 'lightrail', buses: 'bus', ferries: 'ferry', nswtrains: 'coach' };
 const SHEET = { min: 96, half: 0.45, full: 0.82 };
 
+// Earliest favourites were feed:route:destination; keep feed:route, and for
+// buses a numeric operator part if present.
+function trimFav(k) {
+  const p = k.split(':');
+  return p[0] === 'buses' && /^\d+$/.test(p[2] || '') ? p.slice(0, 3).join(':') : p.slice(0, 2).join(':');
+}
+
 const store = {
   get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch { return d; } },
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* private mode */ } },
@@ -26,9 +33,9 @@ const state = {
   windowMin: store.get('window', 60),
   startZoom: store.get('startZoom', 200),
   hidden: new Set(store.get('hiddenModes', [])),
-  // Favourite routes, as feed:route number; covers both directions and every
-  // variant. Older favourites were feed:route:destination, so trim those.
-  favs: new Set(store.get('favourites', []).map((g) => g.split(':').slice(0, 2).join(':'))),
+  // Favourite routes (both directions, every variant), keyed as the server's
+  // trip.fav: feed:route, plus :operator for buses. See migrateFavs().
+  favs: new Set(store.get('favourites', []).map(trimFav)),
   openFavs: store.get('openFavs', false),
   favOnly: store.get('openFavs', false),
   me: null,          // last GPS fix
@@ -172,12 +179,10 @@ function tick() {
 }
 $('pie').addEventListener('click', () => refresh());
 
-// A trip's group is feed:route:destination; favourites are just feed:route
-const routeOf = (group) => group.split(':').slice(0, 2).join(':');
-const isFav = (group) => state.favs.has(routeOf(group));
+const isFav = (t) => state.favs.has(t.fav);
 
 function visibleTrips() {
-  return (state.data?.trips || []).filter((t) => !state.hidden.has(t.mode) && (!state.favOnly || isFav(t.group)));
+  return (state.data?.trips || []).filter((t) => !state.hidden.has(t.mode) && (!state.favOnly || isFav(t)));
 }
 
 function toggleFav(group) {
@@ -259,11 +264,11 @@ function renderMap() {
   }
 
   const shownModes = new Set(trips.map((t) => t.mode));
-  const groupOf = new Map((d?.trips || []).map((t) => [t.key, t.group]));
+  const tripOf = new Map((d?.trips || []).map((t) => [t.key, t]));
   for (const s of d?.stops || []) {
     if (state.hidden.has(s.mode)) continue;
     // With the favourites filter on, only stops a favourite calls at
-    if (state.favOnly && !s.arrivals.some((a) => groupOf.has(a.key) && isFav(groupOf.get(a.key)))) continue;
+    if (state.favOnly && !s.arrivals.some((a) => tripOf.has(a.key) && isFav(tripOf.get(a.key)))) continue;
     const station = s.mode !== 'bus';
     const active = s.arrivals.length > 0 || !shownModes.size;
     const onSel = sel && sel.calls.some((c) => c.stopId === s.id);
@@ -310,7 +315,7 @@ function serviceRow(runs) {
     <span class="badge" style="background:${colorOf(t)}">${esc(label(t))}</span>
     <span class="what"><b>${esc(t.destination || t.route.long)}</b><span class="${t.vehicle ? 'live' : ''}">${esc(c.name)}</span></span>
     <span class="when">${mins(c.t)}<small class="${dl.cls}">${dl.text}</small>${then ? `<small>then ${then} min</small>` : ''}</span>
-    ${star(routeOf(t.group))}</li>`;
+    ${star(t.fav)}</li>`;
 }
 
 function renderList() {
@@ -343,7 +348,7 @@ function renderDetail() {
   el.innerHTML = `<header>
       <span class="badge" style="background:${colorOf(t)}">${esc(label(t))}</span>
       <span class="what"><b>to ${esc(t.destination)}</b><span>${esc(t.route.long || MODES[t.mode]?.label)}</span></span>
-      ${star(routeOf(t.group))}
+      ${star(t.fav)}
       <button class="close" data-close aria-label="Close">✕</button>
     </header>
     <ol class="runs">${runs.map(run).join('')}</ol>
@@ -372,7 +377,7 @@ function openStop(s) {
   const rows = [];
   for (const a of s.arrivals) {
     const t = byKey.get(a.key);
-    if (!t || state.hidden.has(t.mode) || (state.favOnly && !isFav(t.group)) || seen.has(t.group)) continue;
+    if (!t || state.hidden.has(t.mode) || (state.favOnly && !isFav(t)) || seen.has(t.group)) continue;
     seen.add(t.group);
     rows.push(t);
   }
@@ -505,19 +510,33 @@ async function loadCatalogue() {
   const c = await res.json();
   // One entry per route number, gathering its route names and destinations
   const routes = new Map();
-  for (const [feed, short, dest, long] of c.services) {
-    const key = `${feed}:${short}`;
+  for (const [feed, short, dest, long, key] of c.services) {
     let r = routes.get(key);
-    if (!r) routes.set(key, (r = { key, feed, short, longs: new Map(), dests: [] }));
+    if (!r) routes.set(key, (r = { key, feed, short, longs: new Map(), dests: new Set() }));
     if (long) r.longs.set(long, (r.longs.get(long) || 0) + 1);
-    r.dests.push(dest);
+    r.dests.add(dest);
   }
   const list = [...routes.values()].map((r) => {
     const longs = [...r.longs.keys()].sort((a, b) => r.longs.get(b) - r.longs.get(a));
-    return { ...r, longs, text: [...longs, ...r.dests].join(' ').toLowerCase() };
+    const dests = [...r.dests];
+    return { ...r, longs, dests, text: [...longs, ...dests].join(' ').toLowerCase() };
   });
   catalogue = { modes: c.modes, list };
+  migrateFavs();
   return catalogue;
+}
+
+// Bus favourites saved as just buses:route (before bus numbers were told
+// apart by operator) become every bus route with that number.
+function migrateFavs() {
+  const old = [...state.favs].filter((k) => k.startsWith('buses:') && k.split(':').length === 2);
+  if (!old.length || !catalogue) return;
+  for (const k of old) {
+    state.favs.delete(k);
+    for (const r of catalogue.list) if (`${r.feed}:${r.short}` === k) state.favs.add(r.key);
+  }
+  store.set('favourites', [...state.favs]);
+  render();
 }
 
 function favRow(r) {
@@ -543,7 +562,7 @@ function search(q) {
 function renderFavPanel() {
   const q = $('favSearch').value.trim();
   const byKey = new Map((catalogue?.list || []).map((r) => [r.key, r]));
-  const mine = [...state.favs].map((k) => byKey.get(k) || { key: k, feed: k.split(':')[0], short: k.split(':')[1] || k })
+  const mine = [...state.favs].map((k) => byKey.get(k) || { key: k, feed: k.split(':')[0], short: k.split(':')[1] || k, longs: [], dests: [] })
     .sort((a, b) => a.short.localeCompare(b.short, 'en', { numeric: true }));
   let html = `<h3>Your favourite routes (${mine.length})</h3>` + (mine.length
     ? `<ul class="fav-list">${mine.map(favRow).join('')}</ul>`
@@ -647,6 +666,7 @@ if (pinned) {
 } else {
   locate(true);
 }
+if ([...state.favs].some((k) => k.startsWith('buses:') && k.split(':').length === 2)) loadCatalogue().catch(() => {});
 setInterval(tick, 200);
 let hiddenAt = 0;
 document.addEventListener('visibilitychange', () => {
