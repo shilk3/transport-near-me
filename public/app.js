@@ -26,7 +26,9 @@ const state = {
   windowMin: store.get('window', 60),
   startZoom: store.get('startZoom', 200),
   hidden: new Set(store.get('hiddenModes', [])),
-  favs: new Set(store.get('favourites', [])), // service groups: feed:route:destination
+  // Favourite routes, as feed:route number; covers both directions and every
+  // variant. Older favourites were feed:route:destination, so trim those.
+  favs: new Set(store.get('favourites', []).map((g) => g.split(':').slice(0, 2).join(':'))),
   openFavs: store.get('openFavs', false),
   favOnly: store.get('openFavs', false),
   me: null,          // last GPS fix
@@ -38,6 +40,8 @@ const state = {
   error: '',
   locError: '',
 };
+
+store.set('favourites', [...state.favs]); // saves any migrated favourites
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
@@ -168,8 +172,12 @@ function tick() {
 }
 $('pie').addEventListener('click', () => refresh());
 
+// A trip's group is feed:route:destination; favourites are just feed:route
+const routeOf = (group) => group.split(':').slice(0, 2).join(':');
+const isFav = (group) => state.favs.has(routeOf(group));
+
 function visibleTrips() {
-  return (state.data?.trips || []).filter((t) => !state.hidden.has(t.mode) && (!state.favOnly || state.favs.has(t.group)));
+  return (state.data?.trips || []).filter((t) => !state.hidden.has(t.mode) && (!state.favOnly || isFav(t.group)));
 }
 
 function toggleFav(group) {
@@ -255,7 +263,7 @@ function renderMap() {
   for (const s of d?.stops || []) {
     if (state.hidden.has(s.mode)) continue;
     // With the favourites filter on, only stops a favourite calls at
-    if (state.favOnly && !s.arrivals.some((a) => state.favs.has(groupOf.get(a.key)))) continue;
+    if (state.favOnly && !s.arrivals.some((a) => groupOf.has(a.key) && isFav(groupOf.get(a.key)))) continue;
     const station = s.mode !== 'bus';
     const active = s.arrivals.length > 0 || !shownModes.size;
     const onSel = sel && sel.calls.some((c) => c.stopId === s.id);
@@ -302,7 +310,7 @@ function serviceRow(runs) {
     <span class="badge" style="background:${colorOf(t)}">${esc(label(t))}</span>
     <span class="what"><b>${esc(t.destination || t.route.long)}</b><span class="${t.vehicle ? 'live' : ''}">${esc(c.name)}</span></span>
     <span class="when">${mins(c.t)}<small class="${dl.cls}">${dl.text}</small>${then ? `<small>then ${then} min</small>` : ''}</span>
-    ${star(t.group)}</li>`;
+    ${star(routeOf(t.group))}</li>`;
 }
 
 function renderList() {
@@ -335,7 +343,7 @@ function renderDetail() {
   el.innerHTML = `<header>
       <span class="badge" style="background:${colorOf(t)}">${esc(label(t))}</span>
       <span class="what"><b>to ${esc(t.destination)}</b><span>${esc(t.route.long || MODES[t.mode]?.label)}</span></span>
-      ${star(t.group)}
+      ${star(routeOf(t.group))}
       <button class="close" data-close aria-label="Close">✕</button>
     </header>
     <ol class="runs">${runs.map(run).join('')}</ol>
@@ -364,7 +372,7 @@ function openStop(s) {
   const rows = [];
   for (const a of s.arrivals) {
     const t = byKey.get(a.key);
-    if (!t || state.hidden.has(t.mode) || (state.favOnly && !state.favs.has(t.group)) || seen.has(t.group)) continue;
+    if (!t || state.hidden.has(t.mode) || (state.favOnly && !isFav(t.group)) || seen.has(t.group)) continue;
     seen.add(t.group);
     rows.push(t);
   }
@@ -495,48 +503,56 @@ async function loadCatalogue() {
   const res = await fetch('services.json');
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const c = await res.json();
-  catalogue = { modes: c.modes, list: c.services.map(([feed, short, dest, long]) => ({ group: `${feed}:${short}:${dest}`, feed, short, dest, long, text: `${dest} ${long}`.toLowerCase() })) };
+  // One entry per route number, gathering its route names and destinations
+  const routes = new Map();
+  for (const [feed, short, dest, long] of c.services) {
+    const key = `${feed}:${short}`;
+    let r = routes.get(key);
+    if (!r) routes.set(key, (r = { key, feed, short, longs: new Map(), dests: [] }));
+    if (long) r.longs.set(long, (r.longs.get(long) || 0) + 1);
+    r.dests.push(dest);
+  }
+  const list = [...routes.values()].map((r) => {
+    const longs = [...r.longs.keys()].sort((a, b) => r.longs.get(b) - r.longs.get(a));
+    return { ...r, longs, text: [...longs, ...r.dests].join(' ').toLowerCase() };
+  });
+  catalogue = { modes: c.modes, list };
   return catalogue;
 }
 
-function parseGroup(group) {
-  const [feed, short, ...rest] = group.split(':');
-  return { group, feed, short, dest: rest.join(':'), long: '' };
-}
-
-function favRow(s) {
-  const mode = catalogue?.modes[s.feed] || FEED_MODES[s.feed];
-  return `<li><span class="badge" style="background:${MODES[mode]?.color || '#666'}">${esc(s.short)}</span>
-    <span class="what"><b>${esc(s.dest)}</b>${s.long ? `<span>${esc(s.long)}</span>` : ''}</span>${star(s.group)}</li>`;
+function favRow(r) {
+  const mode = catalogue?.modes[r.feed] || FEED_MODES[r.feed];
+  const title = r.longs?.length ? r.longs.slice(0, 2).join(' · ') : MODES[mode]?.label || '';
+  const dests = r.dests?.length ? `to ${r.dests.slice(0, 3).join(', ')}${r.dests.length > 3 ? ` +${r.dests.length - 3} more` : ''}` : '';
+  return `<li><span class="badge" style="background:${MODES[mode]?.color || '#666'}">${esc(r.short)}</span>
+    <span class="what"><b>${esc(title)}</b>${dests ? `<span>${esc(dests)}</span>` : ''}</span>${star(r.key)}</li>`;
 }
 
 function search(q) {
   const words = q.toLowerCase().split(/\s+/).filter(Boolean);
-  const hits = [];
-  for (const s of catalogue.list) {
-    const short = s.short.toLowerCase();
-    // Every word must match the route number (from the start) or the destination/route name
-    if (!words.every((w) => short.startsWith(w) || s.text.includes(w))) continue;
-    hits.push(s);
-  }
-  // Exact route number matches first
-  const exact = (s) => (words.includes(s.short.toLowerCase()) ? 0 : 1);
-  return hits.sort((a, b) => exact(a) - exact(b));
+  const hits = catalogue.list.filter((r) => {
+    const short = r.short.toLowerCase();
+    // Every word must match the route number (from the start) or a route name / destination
+    return words.every((w) => short.startsWith(w) || r.text.includes(w));
+  });
+  // Exact route number matches first, then by route number
+  const exact = (r) => (words.includes(r.short.toLowerCase()) ? 0 : 1);
+  return hits.sort((a, b) => exact(a) - exact(b) || a.short.localeCompare(b.short, 'en', { numeric: true }));
 }
 
 function renderFavPanel() {
   const q = $('favSearch').value.trim();
-  const byGroup = new Map((catalogue?.list || []).map((s) => [s.group, s]));
-  const mine = [...state.favs].map((g) => byGroup.get(g) || parseGroup(g))
-    .sort((a, b) => a.short.localeCompare(b.short, 'en', { numeric: true }) || a.dest.localeCompare(b.dest));
-  let html = `<h3>Your favourites (${mine.length})</h3>` + (mine.length
+  const byKey = new Map((catalogue?.list || []).map((r) => [r.key, r]));
+  const mine = [...state.favs].map((k) => byKey.get(k) || { key: k, feed: k.split(':')[0], short: k.split(':')[1] || k })
+    .sort((a, b) => a.short.localeCompare(b.short, 'en', { numeric: true }));
+  let html = `<h3>Your favourite routes (${mine.length})</h3>` + (mine.length
     ? `<ul class="fav-list">${mine.map(favRow).join('')}</ul>`
     : '<p class="hint">None yet. Search above, or tap ☆ on a service in the main list.</p>');
   if (q) {
-    if (!catalogue) html = '<p class="hint">Loading services…</p>' + html;
+    if (!catalogue) html = '<p class="hint">Loading routes…</p>' + html;
     else {
       const hits = search(q);
-      html = `<h3>${hits.length ? `${hits.length} match${hits.length === 1 ? '' : 'es'}` : 'No matches'}</h3>` +
+      html = `<h3>${hits.length ? `${hits.length} route${hits.length === 1 ? '' : 's'}` : 'No matches'}</h3>` +
         `<ul class="fav-list">${hits.slice(0, 60).map(favRow).join('')}</ul>` +
         (hits.length > 60 ? '<p class="hint">Showing the first 60. Add more words to narrow it down.</p>' : '') + html;
     }
