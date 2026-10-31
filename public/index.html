@@ -44,9 +44,16 @@
       <input id="zoom" type="range" min="0" max="6" step="1">
     </label>
     <label class="check"><input id="openFavs" type="checkbox"> Open with the favourites filter on</label>
+    <button id="manageFavs" class="secondary">Manage favourites</button>
     <p class="hint">Starting zoom is used when you open the app, come back after 15 minutes, or tap the target button. 100% shows the whole circle.</p>
     <p class="hint">Long-press the map to look around somewhere else. Tap the target button to come back.</p>
     <button id="closeSettings" class="primary">Done</button>
+  </div>
+
+  <div id="favPanel" class="panel tall" hidden>
+    <header class="panel-head"><h2>Favourites</h2><button id="closeFavs" class="link">Done</button></header>
+    <input id="favSearch" type="search" placeholder="Search a route number or destination" autocomplete="off" enterkeyhint="search">
+    <div id="favBody" class="fav-body"></div>
   </div>
 
   <section id="sheet" class="sheet" data-size="half">

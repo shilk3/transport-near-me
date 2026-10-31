@@ -18,6 +18,8 @@ import { sydneyDate } from '../lib/time.js';
 import { encode } from '../lib/polyline.js';
 
 const OUT = new URL('../data/network.json', import.meta.url);
+const SERVICES_OUT = new URL('../public/services.json', import.meta.url);
+const NOT_IN_SERVICE = new Set(['Out Of Service', 'Non Revenue']); // as in lib/nearby.js
 const DAYS_BACK = 1;
 const DAYS_AHEAD = 28; // about as far as the bundles go; rebuild before it runs out
 const SIMPLIFY_M = 4; // shape points closer than this to a straight line are dropped
@@ -55,7 +57,11 @@ async function readBundle(feed, tmp) {
 
   const stops = [];
   const stopPos = new Map();
+  const stopName = new Map();
+  const stopParent = new Map();
   await eachRow(dir, 'stops.txt', (r) => {
+    stopName.set(r.stop_id, r.stop_name);
+    if (r.parent_station) stopParent.set(r.stop_id, r.parent_station);
     if (!r.stop_lat || !r.stop_lon) return;
     stops.push([r.stop_id, r.stop_name, round(r.stop_lat), round(r.stop_lon), r.parent_station || '', Number(r.location_type || 0)]);
     stopPos.set(r.stop_id, [Number(r.stop_lat), Number(r.stop_lon)]);
@@ -80,9 +86,18 @@ async function readBundle(feed, tmp) {
     });
   }
 
+  // Station name a platform rolls up to, as the app shows it
+  const displayName = (id) => {
+    let s = id;
+    while (stopParent.has(s) && stopName.has(stopParent.get(s))) s = stopParent.get(s);
+    return stopName.get(s) || '';
+  };
+
   const shapeOf = new Map();
   const headsign = new Map();
+  const tripInfo = new Map(); // trip -> [route_id, trip_headsign]
   await eachRow(dir, 'trips.txt', (t) => {
+    tripInfo.set(t.trip_id, [t.route_id, t.trip_headsign || '']);
     if (t.shape_id) shapeOf.set(t.trip_id, t.shape_id);
     if (feed.timetable && active.has(t.service_id)) headsign.set(t.trip_id, t.trip_headsign || '');
   });
@@ -91,11 +106,22 @@ async function readBundle(feed, tmp) {
   // holding millions of rows.
   const shapePatterns = new Map(); // shape + stops -> { shape, stops, dists }
   const tt = { patterns: [], index: new Map(), trips: {} };
+  const services = new Map(); // every route + destination, for searching favourites
   let cur = null;
   let rows = [];
   const flush = () => {
     if (!rows.length) return;
     rows.sort((a, b) => a.seq - b.seq);
+    const info = tripInfo.get(cur);
+    const route = info && routes[info[0]];
+    if (info && !NOT_IN_SERVICE.has(route?.[1])) {
+      // Same naming as the live list: timetable feeds use the headsign, the
+      // rest the last stop (see lib/nearby.js)
+      const dest = (feed.timetable && info[1]) || displayName(rows[rows.length - 1].stop);
+      const short = route?.[0] || info[0];
+      const key = `${short}\t${dest}`;
+      if (dest && !services.has(key)) services.set(key, [short, dest, route?.[1] || '']);
+    }
     const shape = shapeOf.get(cur);
     if (shape) {
       const key = `${shape}|${rows.map((r) => r.stop).join(',')}`;
@@ -143,7 +169,7 @@ async function readBundle(feed, tmp) {
   const segments = buildSegments(shapePatterns, shapes, stopPos);
   await rm(zipPath);
 
-  const out = { stops, routes, segments };
+  const out = { stops, routes, segments, services: [...services.values()] };
   if (feed.timetable) {
     const days = coveredDays();
     // Usable until the end of our window or the bundle, whichever is first
@@ -243,15 +269,18 @@ function buildSegments(patterns, shapes, stopPos) {
 // ---- main -----------------------------------------------------------------
 
 const network = { builtAt: new Date().toISOString(), feeds: {} };
+const catalogue = { builtAt: network.builtAt, modes: {}, services: [] };
 const tmp = await mkdtemp(join(tmpdir(), 'gtfs-'));
 let failed = 0;
 for (const feed of FEEDS) {
   const t0 = Date.now();
   try {
-    const data = await readBundle(feed, tmp);
+    const { services, ...data } = await readBundle(feed, tmp);
     network.feeds[feed.id] = { mode: feed.mode, ...data };
+    catalogue.modes[feed.id] = feed.mode;
+    for (const s of services) catalogue.services.push([feed.id, ...s]);
     const tt = data.timetable ? `, ${Object.keys(data.timetable.trips).length} timetabled trips in ${data.timetable.patterns.length} patterns` : '';
-    console.log(`${feed.id}: ${data.stops.length} stops, ${Object.keys(data.routes).length} routes, ${Object.keys(data.segments).length} shaped stop pairs${tt} (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
+    console.log(`${feed.id}: ${services.length} services, ${data.stops.length} stops, ${Object.keys(data.routes).length} routes, ${Object.keys(data.segments).length} shaped stop pairs${tt} (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
   } catch (e) {
     failed++;
     console.error(`${feed.id}: ${e.message}`);
@@ -267,6 +296,9 @@ if (!Object.keys(network.feeds).length) {
 }
 await mkdir(new URL('../data/', import.meta.url), { recursive: true });
 await writeFile(OUT, JSON.stringify(network));
+// Every service, for searching favourites; served as a static file
+catalogue.services.sort((a, b) => a[1].localeCompare(b[1], 'en', { numeric: true }) || a[2].localeCompare(b[2]));
+await writeFile(SERVICES_OUT, JSON.stringify(catalogue));
 // Small summary for the daily refresh check, so it needn't load the network
 const ends = Object.values(network.feeds).map((f) => f.timetable?.to).filter(Boolean).sort();
 await writeFile(new URL('../data/meta.json', import.meta.url), JSON.stringify({ builtAt: network.builtAt, timetableExpires: ends[0] || '' }));

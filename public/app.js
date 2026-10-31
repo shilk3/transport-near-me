@@ -12,6 +12,8 @@ const ZOOMS = [50, 75, 100, 150, 200, 300, 400]; // starting zoom; 100% fits the
 const AWAY_MS = 15 * 60000; // back after this long counts as a fresh open
 const REFRESH_MS = 10000; // vehicle positions; arrival times update every 30 s on the server
 const SYDNEY = [-33.8708, 151.2073];
+// Feed -> mode, for favourites added before the service list has loaded (see lib/feeds.js)
+const FEED_MODES = { sydneytrains: 'train', metro: 'metro', 'lr-innerwest': 'lightrail', 'lr-cbdse': 'lightrail', 'lr-parramatta': 'lightrail', buses: 'bus', ferries: 'ferry', nswtrains: 'coach' };
 const SHEET = { min: 96, half: 0.45, full: 0.82 };
 
 const store = {
@@ -484,6 +486,77 @@ function syncSettings() {
   $('zoomOut').textContent = `${state.startZoom}%`;
   $('openFavs').checked = state.openFavs;
 }
+// ---- manage favourites -------------------------------------------------
+// Every service in the network (built with the app, public/services.json),
+// so favourites can be picked from anywhere, not just what's nearby.
+let catalogue = null;
+async function loadCatalogue() {
+  if (catalogue) return catalogue;
+  const res = await fetch('services.json');
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const c = await res.json();
+  catalogue = { modes: c.modes, list: c.services.map(([feed, short, dest, long]) => ({ group: `${feed}:${short}:${dest}`, feed, short, dest, long, text: `${dest} ${long}`.toLowerCase() })) };
+  return catalogue;
+}
+
+function parseGroup(group) {
+  const [feed, short, ...rest] = group.split(':');
+  return { group, feed, short, dest: rest.join(':'), long: '' };
+}
+
+function favRow(s) {
+  const mode = catalogue?.modes[s.feed] || FEED_MODES[s.feed];
+  return `<li><span class="badge" style="background:${MODES[mode]?.color || '#666'}">${esc(s.short)}</span>
+    <span class="what"><b>${esc(s.dest)}</b>${s.long ? `<span>${esc(s.long)}</span>` : ''}</span>${star(s.group)}</li>`;
+}
+
+function search(q) {
+  const words = q.toLowerCase().split(/\s+/).filter(Boolean);
+  const hits = [];
+  for (const s of catalogue.list) {
+    const short = s.short.toLowerCase();
+    // Every word must match the route number (from the start) or the destination/route name
+    if (!words.every((w) => short.startsWith(w) || s.text.includes(w))) continue;
+    hits.push(s);
+  }
+  // Exact route number matches first
+  const exact = (s) => (words.includes(s.short.toLowerCase()) ? 0 : 1);
+  return hits.sort((a, b) => exact(a) - exact(b));
+}
+
+function renderFavPanel() {
+  const q = $('favSearch').value.trim();
+  const byGroup = new Map((catalogue?.list || []).map((s) => [s.group, s]));
+  const mine = [...state.favs].map((g) => byGroup.get(g) || parseGroup(g))
+    .sort((a, b) => a.short.localeCompare(b.short, 'en', { numeric: true }) || a.dest.localeCompare(b.dest));
+  let html = `<h3>Your favourites (${mine.length})</h3>` + (mine.length
+    ? `<ul class="fav-list">${mine.map(favRow).join('')}</ul>`
+    : '<p class="hint">None yet. Search above, or tap ☆ on a service in the main list.</p>');
+  if (q) {
+    if (!catalogue) html = '<p class="hint">Loading services…</p>' + html;
+    else {
+      const hits = search(q);
+      html = `<h3>${hits.length ? `${hits.length} match${hits.length === 1 ? '' : 'es'}` : 'No matches'}</h3>` +
+        `<ul class="fav-list">${hits.slice(0, 60).map(favRow).join('')}</ul>` +
+        (hits.length > 60 ? '<p class="hint">Showing the first 60. Add more words to narrow it down.</p>' : '') + html;
+    }
+  }
+  $('favBody').innerHTML = html;
+}
+
+$('manageFavs').addEventListener('click', () => {
+  $('settings').hidden = true;
+  $('favPanel').hidden = false;
+  renderFavPanel();
+  loadCatalogue().then(renderFavPanel, (e) => { $('favBody').insertAdjacentHTML('afterbegin', `<p class="hint">Couldn't load the service list: ${esc(e.message)}</p>`); });
+});
+$('closeFavs').addEventListener('click', () => { $('favPanel').hidden = true; });
+$('favSearch').addEventListener('input', renderFavPanel);
+$('favBody').addEventListener('click', (e) => {
+  const s = e.target.closest('[data-star]');
+  if (s) { toggleFav(s.dataset.star); renderFavPanel(); }
+});
+
 $('openFavs').addEventListener('change', () => {
   state.openFavs = $('openFavs').checked;
   store.set('openFavs', state.openFavs);

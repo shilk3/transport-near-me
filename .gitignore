@@ -3,3 +3,4 @@ data/network.json
 .vercel
 .env*
 data/meta.json
+public/services.json
